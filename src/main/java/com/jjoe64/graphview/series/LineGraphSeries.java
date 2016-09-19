@@ -24,8 +24,6 @@ import android.graphics.Color;
 import android.graphics.Paint;
 import android.graphics.Path;
 import android.support.v4.view.ViewCompat;
-import android.util.Log;
-import android.view.animation.AccelerateDecelerateInterpolator;
 import android.view.animation.AccelerateInterpolator;
 
 import com.jjoe64.graphview.GraphView;
@@ -40,6 +38,7 @@ import java.util.Iterator;
  */
 public class LineGraphSeries<E extends DataPointInterface> extends BaseSeries<E> {
     private static final long ANIMATION_DURATION = 333;
+    private int mAnimationStartFrameNo;
 
     /**
      * wrapped styles regarding the line
@@ -227,8 +226,12 @@ public class LineGraphSeries<E extends DataPointInterface> extends BaseSeries<E>
 
         lastEndY = 0;
         lastEndX = 0;
+
+        // needed to end the path for background
         double lastUsedEndX = 0;
-        float firstX = 0;
+        double lastUsedEndY = 0;
+        float firstX = -1;
+        float firstY = -1;
         float lastRenderedX = 0;
         int i=0;
         float lastAnimationReferenceX = graphLeft;
@@ -249,7 +252,7 @@ public class LineGraphSeries<E extends DataPointInterface> extends BaseSeries<E>
 
             if (i > 0) {
                 // overdraw
-                boolean isOverdraw = false;
+                boolean isOverdrawY = false;
                 boolean isOverdrawEndPoint = false;
                 boolean skipDraw = false;
 
@@ -257,41 +260,55 @@ public class LineGraphSeries<E extends DataPointInterface> extends BaseSeries<E>
                     double b = ((graphWidth - lastEndX) * (y - lastEndY)/(x - lastEndX));
                     y = lastEndY+b;
                     x = graphWidth;
-                    isOverdraw = isOverdrawEndPoint = true;
+                    isOverdrawEndPoint = true;
                 }
                 if (y < 0) { // end bottom
                     // skip when previous and this point is out of bound
-                    if (lastEndY < 0) {skipDraw=true;}
-                    double b = ((0 - lastEndY) * (x - lastEndX)/(y - lastEndY));
-                    x = lastEndX+b;
+                    if (lastEndY < 0) {
+                        skipDraw=true;
+                    } else {
+                        double b = ((0 - lastEndY) * (x - lastEndX)/(y - lastEndY));
+                        x = lastEndX+b;
+                    }
                     y = 0;
-                    isOverdraw = isOverdrawEndPoint = true;
+                    isOverdrawY = isOverdrawEndPoint = true;
                 }
                 if (y > graphHeight) { // end top
                     // skip when previous and this point is out of bound
-                    if (lastEndY > graphHeight) {skipDraw=true;}
-                    double b = ((graphHeight - lastEndY) * (x - lastEndX)/(y - lastEndY));
-                    x = lastEndX+b;
+                    if (lastEndY > graphHeight) {
+                        skipDraw=true;
+                    } else {
+                        double b = ((graphHeight - lastEndY) * (x - lastEndX)/(y - lastEndY));
+                        x = lastEndX+b;
+                    }
                     y = graphHeight;
-                    isOverdraw = isOverdrawEndPoint = true;
-                }
-                if (lastEndY < 0) { // start bottom
-                    double b = ((0 - y) * (x - lastEndX)/(lastEndY - y));
-                    lastEndX = x-b;
-                    lastEndY = 0;
-                    isOverdraw = true;
+                    isOverdrawY = isOverdrawEndPoint = true;
                 }
                 if (lastEndX < 0) { // start left
                     double b = ((0 - x) * (y - lastEndY)/(lastEndX - x));
                     lastEndY = y-b;
                     lastEndX = 0;
-                    isOverdraw = true;
+                }
+
+                // we need to save the X before it will be corrected when overdraw y
+                float orgStartX = (float) lastEndX + (graphLeft + 1);
+
+                if (lastEndY < 0) { // start bottom
+                    if (!skipDraw) {
+                        double b = ((0 - y) * (x - lastEndX) / (lastEndY - y));
+                        lastEndX = x-b;
+                    }
+                    lastEndY = 0;
+                    isOverdrawY = true;
                 }
                 if (lastEndY > graphHeight) { // start top
-                    double b = ((graphHeight - y) * (x - lastEndX)/(lastEndY - y));
-                    lastEndX = x-b;
+                    // skip when previous and this point is out of bound
+                    if (!skipDraw) {
+                        double b = ((graphHeight - y) * (x - lastEndX)/(lastEndY - y));
+                        lastEndX = x-b;
+                    }
                     lastEndY = graphHeight;
-                    isOverdraw = true;
+                    isOverdrawY = true;
                 }
 
                 float startX = (float) lastEndX + (graphLeft + 1);
@@ -315,6 +332,14 @@ public class LineGraphSeries<E extends DataPointInterface> extends BaseSeries<E>
                             if (mAnimationStart == 0) {
                                 // start animation
                                 mAnimationStart = currentTime;
+                                mAnimationStartFrameNo = 0;
+                            } else {
+                                // anti-lag: wait a few frames
+                                if (mAnimationStartFrameNo < 15) {
+                                    // second time
+                                    mAnimationStart = currentTime;
+                                    mAnimationStartFrameNo++;
+                                }
                             }
                             float timeFactor = (float) (currentTime-mAnimationStart) / ANIMATION_DURATION;
                             float factor = mAnimationInterpolator.getInterpolation(timeFactor);
@@ -347,7 +372,6 @@ public class LineGraphSeries<E extends DataPointInterface> extends BaseSeries<E>
                     if (mDrawAsPath) {
                         mPath.moveTo(startXAnimated, startY);
                     }
-
                     // performance opt.
                     if (Math.abs(endX-lastRenderedX) > .3f) {
                         if (mDrawAsPath) {
@@ -357,16 +381,31 @@ public class LineGraphSeries<E extends DataPointInterface> extends BaseSeries<E>
                         }
                         lastRenderedX = endX;
                     }
+
                 }
 
                 if (mStyles.drawBackground) {
-                    if (i>=1) {
-                        firstX = startX;
+                    if (isOverdrawY) {
+                        // start draw original x
+                        if (firstX == -1) {
+                            firstX = orgStartX;
+                            firstY = startY;
+                            mPathBackground.moveTo(orgStartX, startY);
+                        }
+                        // from original start to new start
+                        mPathBackground.lineTo(startXAnimated, startY);
+                    }
+                    if (firstX == -1) {
+                        firstX = startXAnimated;
+                        firstY = startY;
                         mPathBackground.moveTo(startXAnimated, startY);
                     }
+                    mPathBackground.lineTo(startXAnimated, startY);
                     mPathBackground.lineTo(endXAnimated, endY);
                 }
-                lastUsedEndX = endX;
+
+                lastUsedEndX = endXAnimated;
+                lastUsedEndY = endY;
             } else if (mStyles.drawDataPoints) {
                 //fix: last value not drawn as datapoint. Draw first point here, and then on every step the end values (above)
                 float first_X = (float) x + (graphLeft + 1);
@@ -407,11 +446,18 @@ public class LineGraphSeries<E extends DataPointInterface> extends BaseSeries<E>
             canvas.drawPath(mPath, paint);
         }
 
-        if (mStyles.drawBackground) {
+        if (mStyles.drawBackground && firstX != -1) {
             // end / close path
-            mPathBackground.lineTo((float) lastUsedEndX, graphHeight + graphTop);
+            if (lastUsedEndY != graphHeight + graphTop) {
+                // dont draw line to same point, otherwise the path is completely broken
+                mPathBackground.lineTo((float) lastUsedEndX, graphHeight + graphTop);
+            }
             mPathBackground.lineTo(firstX, graphHeight + graphTop);
-            mPathBackground.close();
+            if (firstY != graphHeight + graphTop) {
+                // dont draw line to same point, otherwise the path is completely broken
+                mPathBackground.lineTo(firstX, firstY);
+            }
+            //mPathBackground.close();
             canvas.drawPath(mPathBackground, mPaintBackground);
         }
 

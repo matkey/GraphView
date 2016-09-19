@@ -26,7 +26,6 @@ import android.graphics.Paint;
 import android.graphics.Point;
 import android.graphics.PointF;
 import android.util.AttributeSet;
-import android.util.Log;
 import android.view.MotionEvent;
 import android.view.View;
 
@@ -416,6 +415,7 @@ public class GraphView extends View {
         int graphwidth = getWidth() - (2 * border) - getGridLabelRenderer().getLabelVerticalWidth();
         if (mSecondScale != null) {
             graphwidth -= getGridLabelRenderer().getLabelVerticalSecondScaleWidth();
+            graphwidth -= mSecondScale.getVerticalAxisTitleTextSize();
         }
         return graphwidth;
     }
@@ -532,7 +532,9 @@ public class GraphView extends View {
      */
     public SecondScale getSecondScale() {
         if (mSecondScale == null) {
+            // this creates the second scale
             mSecondScale = new SecondScale(this);
+            mSecondScale.setVerticalAxisTitleTextSize(mGridLabelRenderer.mStyles.textSize);
         }
         return mSecondScale;
     }
